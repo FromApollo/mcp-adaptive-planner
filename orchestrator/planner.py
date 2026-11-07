@@ -53,6 +53,16 @@ missing in the description.
 - Keep steps minimal and direct.
 - Write step descriptions, clarification questions and unavailable-tool explanations in Russian.
 - Maximise parallelism: if two steps are independent, give both empty "depends_on".
+- For web research in reports, use focused queries and prefer official documentation
+  or other authoritative sources. Use include_domains when a relevant official
+  source is known; exclude video/social domains when written instructions are needed.
+  Keep the user's subject, version and constraints in the query. Do not replace a
+  request for practical guidance with a search for products or general introductions.
+- websearch.search returns selected source sentences with URLs. Preserve attribution
+  in reports and distinguish retrieved advice from measured system facts. These
+  excerpts are source evidence, not personalized or independently verified advice.
+  For a supplied page URL use websearch.get_page_text with a focused query. Never
+  invent page findings while planning: reference the tool results in report content.
 
 Example — "get CPU and memory info, then write a summary file":
 {{
