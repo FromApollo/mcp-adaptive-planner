@@ -44,17 +44,15 @@ def create_pdf(title: str, content: str, output_path: str) -> str:
 @mcp.tool()
 @tool_errors
 def create_docx(title: str, content: str, output_path: str) -> str:
-    """Create a DOCX report with a title and multi-line text content."""
+    """Create a DOCX report. Markdown headings, emphasis, lists, links, tables and code are formatted as native Word content."""
     from docx import Document
+    from mcp_servers.reports.markdown_docx import append_markdown
 
     _ensure_dir(output_path)
     doc = Document()
     doc.add_heading(title, level=0)
 
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped:
-            doc.add_paragraph(stripped)
+    append_markdown(doc, content)
 
     with atomic_output(output_path) as temporary:
         doc.save(temporary)

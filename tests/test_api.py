@@ -38,6 +38,36 @@ def test_invalid_rest_requests(api, task):
     assert api.post("/run", json={"task": task}).status_code == 422
 
 
+def test_russian_frontend_and_static_modules(api):
+    page = api.get("/")
+    assert page.status_code == 200
+    assert '<html lang="ru">' in page.text
+    assert '/static/app.js' in page.text
+    assert 'Журнал шагов' in page.text
+    for asset in ('app.js', 'state.js', 'ui.js', 'dag.js', 'dag-view.js', 'markdown.js', 'vendor/markdown-it.min.js', 'styles.css'):
+        response = api.get('/static/' + asset)
+        assert response.status_code == 200
+        assert 'text/' in response.headers['content-type'] or 'javascript' in response.headers['content-type']
+    assert api.get('/static/missing.js').status_code == 404
+
+
+async def test_question_text_is_sent_as_the_label_independent_of_opaque_id(monkeypatch):
+    responses = [
+        {'questions': [{'id': 'q1', 'question': 'Какой текст сохранить?'},
+                       {'id': 'q2', 'question': 'Куда сохранить файл?'}]},
+        _plan(_step(1, 'filesystem', 'write_file', {'path': 'data/test.txt', 'content': 'text'})),
+    ]
+    monkeypatch.setattr(main, 'plan', lambda *args: responses.pop(0))
+    monkeypatch.setattr(main, '_tools', TOOLS)
+    async def ask(message, schema, history):
+        assert schema['properties']['q1']['title'] == 'Какой текст сохранить?'
+        assert schema['properties']['q2']['title'] == 'Куда сохранить файл?'
+        assert schema['properties']['q2']['description'] == 'Куда сохранить файл?'
+        return {'q1': 'text', 'q2': 'data/test.txt'}
+    result = await main.prepare_plan(main.TaskRequest(task='Сохрани текст в файл'), ask)
+    assert result['steps'][0]['params']['content'] == 'text'
+
+
 def test_rest_needs_input_and_continues(api, monkeypatch):
     calls = []
     def planner(task, description, history):
