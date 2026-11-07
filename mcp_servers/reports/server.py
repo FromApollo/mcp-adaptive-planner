@@ -17,7 +17,7 @@ def create_pdf(title: str, content: str, output_path: str) -> str:
     """Create a PDF report with a title and multi-line text content."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
-    from reportlab.lib.styles import getSampleStyleSheet
+    from mcp_servers.reports.pdf_fonts import pdf_styles
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
     _ensure_dir(output_path)
@@ -26,7 +26,7 @@ def create_pdf(title: str, content: str, output_path: str) -> str:
         rightMargin=2 * cm, leftMargin=2 * cm,
         topMargin=2 * cm, bottomMargin=2 * cm,
     )
-    styles = getSampleStyleSheet()
+    styles = pdf_styles()
     story = [Paragraph(escape(title), styles["Title"]), Spacer(1, 0.5 * cm)]
 
     for line in content.splitlines():
@@ -69,7 +69,7 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
-    from reportlab.lib.styles import getSampleStyleSheet
+    from mcp_servers.reports.pdf_fonts import pdf_styles, REGULAR, BOLD
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
@@ -77,7 +77,7 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
     doc = SimpleDocTemplate(output_path, pagesize=A4,
                             rightMargin=2 * cm, leftMargin=2 * cm,
                             topMargin=2 * cm, bottomMargin=2 * cm)
-    styles = getSampleStyleSheet()
+    styles = pdf_styles()
     story = [Paragraph(escape(title), styles["Title"]), Spacer(1, 0.5 * cm)]
 
     header_row = [h.strip() for h in headers.split(",")]
@@ -92,7 +92,8 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, -1), REGULAR),
+        ("FONTNAME", (0, 0), (-1, 0), BOLD),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),

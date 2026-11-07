@@ -1,4 +1,5 @@
 import platform
+import time
 import psutil
 from mcp.server.fastmcp.server import FastMCP
 from mcp_servers.common import tool_errors
@@ -62,16 +63,30 @@ def get_disk() -> str:
 @mcp.tool()
 @tool_errors
 def get_top_processes(limit: int = 10) -> str:
-    """Get top processes sorted by CPU usage."""
-    procs = sorted(
-        psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]),
-        key=lambda p: p.info["cpu_percent"] or 0,
-        reverse=True,
-    )[:limit]
+    """Get top processes by CPU usage measured over one shared one-second interval."""
+    processes = []
+    for process in psutil.process_iter():
+        if process.pid == 0:  # Windows' System Idle Process measures idle time, not load.
+            continue
+        try:
+            process.cpu_percent(interval=None)  # Prime the per-process counter.
+            processes.append(process)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    time.sleep(1)
+    samples = []
+    for process in processes:
+        try:
+            with process.oneshot():
+                cpu = process.cpu_percent(interval=None)
+                samples.append((process.pid, process.name(), cpu, process.memory_percent()))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue  # A process can exit or become inaccessible during the sample.
+    samples.sort(key=lambda sample: (-sample[2], sample[0]))
     header = f"{'PID':<7}{'Name':<25}{'CPU%':<8}{'MEM%'}"
     rows = [
-        f"{p.info['pid']:<7}{p.info['name']:<25}{p.info['cpu_percent'] or 0:<8.1f}{p.info['memory_percent'] or 0:.1f}"
-        for p in procs
+        f"{pid:<7}{name:<25}{cpu:<8.1f}{memory:.1f}"
+        for pid, name, cpu, memory in samples[:limit]
     ]
     return "\n".join([header] + rows)
 
