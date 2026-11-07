@@ -1,7 +1,13 @@
 import sys
 import asyncio
+import os
+import json
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
+from orchestrator.errors import classify_error
+from orchestrator.logging_config import get_logger
+
+logger = get_logger("registry")
 
 SERVERS: dict[str, str] = {
     "filesystem": "mcp_servers.filesystem.server",
@@ -36,15 +42,25 @@ async def _list_tools(server_name: str) -> list[dict]:
                     for t in result.tools
                 ]
     except Exception as exc:
-        return [{"server": server_name, "error": str(exc)}]
+        error = classify_error(exc)
+        logger.warning("discovery_failed", extra={"server": server_name, "code": error.code})
+        return [{"server": server_name, "error": str(error), "error_code": error.code}]
 
 
 async def discover_all_tools() -> list[dict]:
-    tasks = [_list_tools(name) for name in SERVERS]
+    async def bounded(name):
+        try:
+            return await asyncio.wait_for(_list_tools(name), float(os.getenv("DISCOVERY_TIMEOUT_SEC", "20")))
+        except TimeoutError:
+            logger.warning("discovery_timeout", extra={"server": name, "code": "timeout"})
+            return [{"server": name, "error": "Tool discovery timed out.", "error_code": "timeout"}]
+
+    tasks = [bounded(name) for name in SERVERS]
     results = await asyncio.gather(*tasks)
     tools = []
     for server_tools in results:
         tools.extend(server_tools)
+    logger.info("discovery_finished", extra={"count": sum("error" not in t for t in tools)})
     return tools
 
 
@@ -54,9 +70,6 @@ def build_tools_description(tools: list[dict]) -> str:
         if "error" in t:
             lines.append(f"  [WARNING] {t['server']} failed to load: {t['error']}")
             continue
-        props = t.get("input_schema", {}).get("properties", {})
-        params = ", ".join(
-            f"{k}: {v.get('type', 'any')}" for k, v in props.items()
-        )
-        lines.append(f"  - {t['server']}.{t['name']}({params}) — {t['description']}")
+        schema = json.dumps(t.get("input_schema", {}), ensure_ascii=False)
+        lines.append(f"  - {t['server']}.{t['name']} — {t['description']}\n    Input schema: {schema}")
     return "\n".join(lines)

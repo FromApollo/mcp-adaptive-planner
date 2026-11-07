@@ -1,11 +1,13 @@
 import platform
 import psutil
 from mcp.server.fastmcp.server import FastMCP
+from mcp_servers.common import tool_errors
 
 mcp = FastMCP("sysinfo")
 
 
 @mcp.tool()
+@tool_errors
 def get_system_info() -> str:
     """Get a full system overview: OS, CPU, memory, and disk usage."""
     cpu_pct = psutil.cpu_percent(interval=1)
@@ -20,6 +22,7 @@ def get_system_info() -> str:
 
 
 @mcp.tool()
+@tool_errors
 def get_cpu() -> str:
     """Get CPU usage per core and frequency."""
     per_core = psutil.cpu_percent(interval=1, percpu=True)
@@ -29,6 +32,7 @@ def get_cpu() -> str:
 
 
 @mcp.tool()
+@tool_errors
 def get_memory() -> str:
     """Get RAM and swap memory usage."""
     mem = psutil.virtual_memory()
@@ -40,6 +44,7 @@ def get_memory() -> str:
 
 
 @mcp.tool()
+@tool_errors
 def get_disk() -> str:
     """Get disk usage for all mounted partitions."""
     lines = []
@@ -55,6 +60,7 @@ def get_disk() -> str:
 
 
 @mcp.tool()
+@tool_errors
 def get_top_processes(limit: int = 10) -> str:
     """Get top processes sorted by CPU usage."""
     procs = sorted(

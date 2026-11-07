@@ -2,6 +2,8 @@ import os
 import sqlite3
 from datetime import datetime
 from mcp.server.fastmcp.server import FastMCP
+from mcp_servers.common import tool_errors
+from orchestrator.errors import AppError
 
 DB_PATH = os.getenv("NOTES_DB", "data/notes.db")
 
@@ -24,8 +26,11 @@ def _db():
 
 
 @mcp.tool()
+@tool_errors
 def create_note(title: str, content: str, tags: str = "") -> str:
     """Create or update a note with a title, content and optional comma-separated tags."""
+    if not title.strip():
+        raise AppError("invalid_arguments", "Note title must not be blank.")
     now = datetime.now().isoformat(timespec="seconds")
     with _db() as conn:
         conn.execute(
@@ -41,6 +46,7 @@ def create_note(title: str, content: str, tags: str = "") -> str:
 
 
 @mcp.tool()
+@tool_errors
 def get_note(title: str) -> str:
     """Get the full content of a note by its title."""
     with _db() as conn:
@@ -49,10 +55,11 @@ def get_note(title: str) -> str:
         ).fetchone()
     if row:
         return f"Title: {title}\nTags: {row[1]}\nUpdated: {row[2]}\n\n{row[0]}"
-    return f"Note '{title}' not found."
+    raise AppError("not_found", "The requested note was not found.")
 
 
 @mcp.tool()
+@tool_errors
 def search_notes(query: str) -> str:
     """Search notes by keyword in title, content or tags."""
     like = f"%{query}%"
@@ -68,6 +75,7 @@ def search_notes(query: str) -> str:
 
 
 @mcp.tool()
+@tool_errors
 def list_notes() -> str:
     """List all saved notes (title, tags, last updated)."""
     with _db() as conn:

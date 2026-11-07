@@ -34,6 +34,8 @@
     .step-card.done    { border-left-color: var(--c-done-border);    background: var(--c-done-fill); }
     .step-card.error   { border-left-color: var(--c-error-border);   background: var(--c-error-fill); }
     .step-card.skipped { border-left-color: var(--c-skipped-border); background: var(--c-skipped-fill); }
+    .step-card.waiting_input { border-left-color: #fd7e14; background: #fff3cd; }
+    .step-card.cancelled { border-left-color: #6c757d; background: #e9ecef; }
 
     .result-preview {
       font-family: 'Consolas', monospace;
@@ -102,6 +104,7 @@
             <button id="run-btn" class="btn btn-primary px-4" onclick="runTask()">
               <i class="bi bi-play-fill me-1"></i>Run
             </button>
+            <button id="cancel-btn" class="btn btn-outline-danger" style="display:none" onclick="cancelTask()">Cancel</button>
           </div>
           <div class="mt-2 d-flex flex-wrap gap-2" id="suggestions">
             <span class="badge rounded-pill border border-primary text-primary bg-white suggestion-chip"
@@ -124,6 +127,7 @@
   </div>
 
   <!-- Main: DAG + Log -->
+  <div id="elicitation-container" class="mb-3" aria-live="polite"></div>
   <div class="row g-3 mb-3">
 
     <!-- DAG -->
@@ -202,15 +206,25 @@ let taskStart   = null;
 let isRunning   = false;
 let renderBusy  = false;
 let renderAgain = false;
+const inputForms = new Map();
 
 // ─── Connection ────────────────────────────────────────────────────────────────
 function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen  = () => setBadge('success', 'Connected');
-  ws.onclose = () => { setBadge('secondary', 'Disconnected'); ws = null; };
-  ws.onerror = () => setBadge('danger',    'Error');
-  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+  const socket = new WebSocket(`${proto}://${location.host}/ws`);
+  ws = socket;
+  socket.onopen = () => setBadge('success', 'Connected');
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    setBadge('secondary', 'Disconnected'); ws = null;
+    if (isRunning) onError('Connection lost. Execution was cancelled; completed actions may remain.');
+  };
+  socket.onerror = () => setBadge('danger', 'Error');
+  socket.onmessage = e => {
+    try { handleMsg(JSON.parse(e.data)); }
+    catch (_) { onError('The server returned an invalid message.'); }
+  };
 }
 
 function setBadge(cls, text) {
@@ -220,22 +234,33 @@ function setBadge(cls, text) {
 }
 
 // ─── Run ───────────────────────────────────────────────────────────────────────
-function runTask() {
+async function runTask() {
   const input = document.getElementById('task-input');
   const task  = input.value.trim();
   if (!task || isRunning) return;
 
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    connect();
-    // Wait for open then send
-    const pending = () => {
-      if (ws && ws.readyState === WebSocket.OPEN) { sendTask(task); }
-      else { setTimeout(pending, 100); }
-    };
-    setTimeout(pending, 100);
-  } else {
+  isRunning = true;
+  document.getElementById('run-btn').disabled = true;
+  try {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connect();
+      const socket = ws;
+      await new Promise((resolve, reject) => {
+        const finish = (error) => {
+          clearTimeout(timer);
+          socket.removeEventListener('open', opened);
+          socket.removeEventListener('close', closed);
+          error ? reject(error) : resolve();
+        };
+        const opened = () => finish();
+        const closed = () => finish(new Error('Could not connect to the server.'));
+        const timer = setTimeout(() => finish(new Error('Connection timed out.')), 10000);
+        socket.addEventListener('open', opened, {once:true});
+        socket.addEventListener('close', closed, {once:true});
+      });
+    }
     sendTask(task);
-  }
+  } catch (error) { onError(error.message); }
 }
 
 function sendTask(task) {
@@ -248,6 +273,9 @@ function sendTask(task) {
   const btn = document.getElementById('run-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spin"><i class="bi bi-arrow-repeat"></i></span> Running…';
+  document.getElementById('cancel-btn').style.display = '';
+  document.getElementById('task-input').disabled = true;
+  clearInputForms();
 
   document.getElementById('result-alert').style.display = 'none';
   document.getElementById('status-text').textContent = '⏳ Sending task to LLM planner…';
@@ -284,8 +312,104 @@ function handleMsg(msg) {
     case 'plan':        onPlan(msg.plan);   break;
     case 'step_update': onStep(msg);        break;
     case 'done':        onDone(msg);        break;
-    case 'error':       onError(msg.message); break;
+    case 'error':       onError(`${msg.code ? `[${msg.code}] ` : ''}${msg.message}${msg.run_id ? ` (run: ${msg.run_id})` : ''}`); break;
+    case 'elicitation': onElicitation(msg); break;
+    case 'input_accepted':
+      inputForms.get(msg.request_id)?.remove(); inputForms.delete(msg.request_id);
+      document.getElementById('status-text').textContent = 'Answer received. Continuing…';
+      break;
+    case 'input_closed':
+      inputForms.get(msg.request_id)?.remove(); inputForms.delete(msg.request_id);
+      break;
+    case 'input_error': {
+      const form = inputForms.get(msg.request_id);
+      if (form) {
+        form.querySelector('.input-error').textContent = msg.message;
+        form.querySelectorAll('button').forEach(b => b.disabled = false);
+      } else document.getElementById('status-text').textContent = msg.message;
+      break;
+    }
+    case 'cancelled': onError(msg.message); break;
+    case 'run_started':
+      document.getElementById('status-text').textContent = `Planning… Run: ${msg.run_id}`;
+      break;
   }
+}
+
+function cancelTask() {
+  if (isRunning && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'cancel'}));
+}
+
+function clearInputForms() {
+  inputForms.clear();
+  document.getElementById('elicitation-container').replaceChildren();
+}
+
+function onElicitation(msg) {
+  const form = document.createElement('form');
+  form.className = 'card card-body border border-warning mb-2';
+  const title = document.createElement('h6');
+  title.textContent = msg.message;
+  form.appendChild(title);
+  const fields = [];
+  const schema = msg.requested_schema;
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    const label = document.createElement('label');
+    label.className = 'form-label d-block';
+    label.textContent = prop.title || key;
+    const input = document.createElement(prop.enum ? 'select' : 'input');
+    input.className = prop.type === 'boolean' ? 'form-check-input ms-2' : 'form-control mt-1';
+    input.required = schema.required?.includes(key) && prop.type !== 'boolean';
+    if (prop.enum) {
+      prop.enum.forEach(value => {
+        const option = document.createElement('option');
+        option.value = JSON.stringify(value); option.textContent = String(value);
+        input.appendChild(option);
+      });
+    } else if (prop.type === 'boolean') {
+      input.type = 'checkbox'; input.checked = prop.default === true;
+    } else {
+      input.type = ['number', 'integer'].includes(prop.type) ? 'number' : 'text';
+      if (input.type === 'number') input.step = prop.type === 'integer' ? '1' : 'any';
+      if (prop.minimum != null) input.min = prop.minimum;
+      if (prop.maximum != null) input.max = prop.maximum;
+      if (prop.minLength != null) input.minLength = prop.minLength;
+      if (prop.maxLength != null) input.maxLength = prop.maxLength;
+      input.value = prop.default ?? '';
+    }
+    label.appendChild(input); form.appendChild(label);
+    fields.push({key, prop, input});
+  }
+  const error = document.createElement('div');
+  error.className = 'input-error text-danger small mb-2'; form.appendChild(error);
+  const buttons = document.createElement('div');
+  const submit = document.createElement('button');
+  submit.type = 'submit'; submit.className = 'btn btn-primary me-2'; submit.textContent = 'Continue';
+  const decline = document.createElement('button');
+  decline.type = 'button'; decline.className = 'btn btn-outline-secondary'; decline.textContent = 'Decline';
+  const respond = (action, content) => {
+    if (ws?.readyState !== WebSocket.OPEN) { onError('Connection lost.'); return; }
+    error.textContent = '';
+    ws.send(JSON.stringify({type:'elicitation_response', request_id:msg.request_id, action, content}));
+    submit.disabled = decline.disabled = true;
+  };
+  form.onsubmit = event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const content = Object.create(null);
+    fields.forEach(({key, prop, input}) => {
+      if (!input.required && input.value === '' && prop.type !== 'boolean') return;
+      content[key] = prop.enum ? JSON.parse(input.value) : prop.type === 'boolean' ? input.checked
+        : ['number', 'integer'].includes(prop.type) ? Number(input.value) : input.value;
+    });
+    respond('accept', content);
+  };
+  decline.onclick = () => respond('decline');
+  buttons.append(submit, decline); form.appendChild(buttons);
+  inputForms.set(msg.request_id, form);
+  document.getElementById('elicitation-container').appendChild(form);
+  document.getElementById('status-text').textContent = 'Waiting for your answer…';
+  form.querySelector('input,select')?.focus();
 }
 
 function onPlan(plan) {
@@ -316,6 +440,10 @@ function onStep(msg) {
 
 function onDone(msg) {
   isRunning = false;
+  clearInputForms();
+  document.getElementById('cancel-btn').style.display = 'none';
+  document.getElementById('task-input').disabled = false;
+  (msg.execution || []).forEach(onStep);
   const elapsed = ((Date.now() - taskStart) / 1000).toFixed(1);
 
   const btn = document.getElementById('run-btn');
@@ -328,11 +456,13 @@ function onDone(msg) {
   if (msg.success) {
     alertEl.innerHTML = `<div class="alert alert-success d-flex align-items-center gap-2 mb-0">
       <i class="bi bi-check-circle-fill fs-5"></i>
-      <div><strong>Task completed successfully</strong> in ${elapsed}s</div></div>`;
+      <div><strong>Task completed successfully</strong> in ${elapsed}s
+      <div class="small">Run: ${esc(msg.run_id || '')}</div></div></div>`;
   } else {
     alertEl.innerHTML = `<div class="alert alert-danger d-flex align-items-center gap-2 mb-0">
       <i class="bi bi-x-circle-fill fs-5"></i>
-      <div><strong>Task failed</strong> after ${elapsed}s — see errors in the log</div></div>`;
+      <div><strong>Task failed</strong> after ${elapsed}s — see errors in the log
+      <div class="small">Run: ${esc(msg.run_id || '')}</div></div></div>`;
   }
 
   const task = document.getElementById('task-input').value.trim();
@@ -341,6 +471,18 @@ function onDone(msg) {
 
 function onError(message) {
   isRunning = false;
+  clearInputForms();
+  document.getElementById('cancel-btn').style.display = 'none';
+  document.getElementById('task-input').disabled = false;
+  for (const step of planSteps) {
+    if (['pending', 'running', 'waiting_input'].includes(stepStatus[step.id])) {
+      onStep({id:step.id, status:'cancelled', error:message});
+    }
+  }
+  if (!planSteps.length) {
+    document.getElementById('dag-container').textContent = 'No executable plan';
+    document.getElementById('log-container').textContent = 'No steps executed';
+  }
   const btn = document.getElementById('run-btn');
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run';
@@ -361,6 +503,8 @@ function dagSource() {
   lines.push('classDef done    fill:#d1e7dd,stroke:#198754,color:#0a3622');
   lines.push('classDef error   fill:#f8d7da,stroke:#dc3545,color:#58151c');
   lines.push('classDef skipped fill:#fff3cd,stroke:#ffc107,color:#664d03');
+  lines.push('classDef waiting_input fill:#fff3cd,stroke:#fd7e14,color:#664d03');
+  lines.push('classDef cancelled fill:#e9ecef,stroke:#6c757d,color:#495057');
 
   for (const s of planSteps) {
     const st  = stepStatus[s.id] || 'pending';
@@ -397,9 +541,12 @@ const STATUS_ICON = {
   done:    '<i class="bi bi-check-circle-fill text-success"></i>',
   error:   '<i class="bi bi-x-circle-fill text-danger"></i>',
   skipped: '<i class="bi bi-dash-circle text-warning"></i>',
+  waiting_input: '<i class="bi bi-chat-square-text text-warning"></i>',
+  cancelled: '<i class="bi bi-stop-circle text-secondary"></i>',
 };
 const STATUS_BADGE_CLS = {
   pending: 'secondary', running: 'primary', done: 'success', error: 'danger', skipped: 'warning',
+  waiting_input: 'warning', cancelled: 'secondary',
 };
 
 function cardHTML(id) {
@@ -413,11 +560,12 @@ function cardHTML(id) {
 
   let extra = '';
   if (st === 'done' && d.result) {
-    const preview = d.result.length > 240 ? d.result.slice(0, 240) + '…' : d.result;
+    const text = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
+    const preview = text.length > 240 ? text.slice(0, 240) + '…' : text;
     extra = `<div class="result-preview">${esc(preview)}</div>`;
-  } else if ((st === 'error' || st === 'skipped') && d.error) {
+  } else if (['error', 'skipped', 'cancelled'].includes(st) && d.error) {
     extra = `<div class="text-danger small mt-1">
-      <i class="bi bi-exclamation-triangle me-1"></i>${esc(d.error)}</div>`;
+      <i class="bi bi-exclamation-triangle me-1"></i>${d.error_code ? `[${esc(d.error_code)}] ` : ''}${esc(d.error)}</div>`;
   }
 
   return `<div class="d-flex align-items-start gap-2">
