@@ -1,693 +1,116 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Planner Agent</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-  <style>
-    :root {
-      --c-pending-fill: #e9ecef; --c-pending-border: #adb5bd;
-      --c-running-fill: #cfe2ff; --c-running-border: #0d6efd;
-      --c-done-fill:    #d1e7dd; --c-done-border:    #198754;
-      --c-error-fill:   #f8d7da; --c-error-border:   #dc3545;
-      --c-skipped-fill: #fff3cd; --c-skipped-border: #ffc107;
-    }
-    body { background: #f0f2f5; min-height: 100vh; }
-    .navbar { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); }
-    .navbar-brand { font-weight: 700; letter-spacing: -.5px; color: #fff !important; }
-    #ws-badge { font-size: .75rem; transition: all .3s; }
-    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-    .card-header { background: #fff; border-bottom: 1px solid #eee; font-weight: 600; font-size: .9rem; }
-
-    /* Step cards */
-    .step-card {
-      border-left: 4px solid var(--c-pending-border);
-      background: #fff;
-      border-radius: 6px;
-      padding: 10px 12px;
-      margin-bottom: 8px;
-      transition: border-color .25s, background .25s;
-    }
-    .step-card.running { border-left-color: var(--c-running-border); background: var(--c-running-fill); }
-    .step-card.done    { border-left-color: var(--c-done-border);    background: var(--c-done-fill); }
-    .step-card.error   { border-left-color: var(--c-error-border);   background: var(--c-error-fill); }
-    .step-card.skipped { border-left-color: var(--c-skipped-border); background: var(--c-skipped-fill); }
-    .step-card.waiting_input { border-left-color: #fd7e14; background: #fff3cd; }
-    .step-card.cancelled { border-left-color: #6c757d; background: #e9ecef; }
-
-    .result-preview {
-      font-family: 'Consolas', monospace;
-      font-size: .76rem;
-      color: #444;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 72px;
-      overflow: hidden;
-      background: rgba(0,0,0,.04);
-      border-radius: 4px;
-      padding: 4px 6px;
-      margin-top: 4px;
-    }
-
-    /* DAG area */
-    #dag-container { min-height: 180px; overflow: auto; }
-    #dag-container svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-
-    /* Log scroll */
-    #log-container { max-height: 430px; overflow-y: auto; }
-
-    /* Spinner */
-    .spin { display: inline-block; animation: spin .8s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* History */
-    .history-item { cursor: pointer; transition: background .15s; border-left: 3px solid transparent; }
-    .history-item:hover { background: #f0f4ff; border-left-color: #0d6efd; }
-
-    /* Suggestions */
-    .suggestion-chip {
-      cursor: pointer;
-      font-size: .78rem;
-      transition: background .15s, border-color .15s;
-    }
-    .suggestion-chip:hover { background: #e0e7ff !important; border-color: #6366f1 !important; }
-  </style>
+  <meta name="theme-color" content="#4f46e5">
+  <title>Планировщик задач</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script defer src="/static/vendor/markdown-it.min.js"></script>
+  <script type="module" src="/static/app.js"></script>
 </head>
 <body>
-
-<!-- Navbar -->
-<nav class="navbar navbar-dark px-4 py-2">
-  <span class="navbar-brand mb-0 h6">
-    <i class="bi bi-diagram-3-fill me-2" style="color:#60a5fa"></i>Planner Agent
-  </span>
-  <span id="ws-badge" class="badge bg-secondary">
-    <i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>Disconnected
-  </span>
-</nav>
-
-<div class="container-fluid py-3 px-4">
-
-  <!-- Task Input -->
-  <div class="row mb-3">
-    <div class="col">
-      <div class="card">
-        <div class="card-body py-3">
-          <div class="input-group input-group-lg">
-            <span class="input-group-text bg-white border-end-0">
-              <i class="bi bi-chat-square-text text-primary"></i>
-            </span>
-            <input id="task-input" type="text" class="form-control border-start-0 ps-1"
-              placeholder="Describe your task… e.g. get CPU and memory info and write a report file"
-              autocomplete="off">
-            <button id="run-btn" class="btn btn-primary px-4" onclick="runTask()">
-              <i class="bi bi-play-fill me-1"></i>Run
-            </button>
-            <button id="cancel-btn" class="btn btn-outline-danger" style="display:none" onclick="cancelTask()">Cancel</button>
-          </div>
-          <div class="mt-2 d-flex flex-wrap gap-2" id="suggestions">
-            <span class="badge rounded-pill border border-primary text-primary bg-white suggestion-chip"
-              onclick="setSuggestion(this)">
-              get CPU and memory, write data/sysreport.txt
-            </span>
-            <span class="badge rounded-pill border border-primary text-primary bg-white suggestion-chip"
-              onclick="setSuggestion(this)">
-              list files in current directory and save note titled Dir Listing
-            </span>
-            <span class="badge rounded-pill border border-primary text-primary bg-white suggestion-chip"
-              onclick="setSuggestion(this)">
-              get full system info and create a PDF report at data/system_report.pdf
-            </span>
-          </div>
-          <div id="status-text" class="text-muted small mt-1" style="min-height:1.2em"></div>
-        </div>
-      </div>
+<a class="visually-hidden-focusable skip-link" href="#task-prompt">Перейти к задаче</a>
+<div class="app-shell">
+  <aside class="sidebar offcanvas-md offcanvas-start" id="history-sidebar" tabindex="-1" aria-labelledby="brand-title">
+    <div class="brand-row">
+      <div class="brand-mark" data-icon="check"></div>
+      <div><div class="brand" id="brand-title">Планировщик</div><div class="brand-caption">Рабочая область</div></div>
+      <button class="icon-button sidebar-close" type="button" data-bs-dismiss="offcanvas" data-bs-target="#history-sidebar" aria-label="Закрыть историю"><span data-icon="x"></span></button>
     </div>
+    <button class="btn btn-primary primary-button new-task-button" type="button" data-action="new-task"><span data-icon="plus"></span>Новая задача</button>
+    <div id="active-run-card"></div>
+    <div class="history-header">История запусков <span class="count" id="history-count">0</span></div>
+    <nav class="history-list" id="history-list" aria-label="История запусков"></nav>
+    <div class="sidebar-footer">
+      <button class="text-button text-button--danger" id="clear-history-btn" type="button" data-action="confirm-clear" disabled><span data-icon="trash"></span>Очистить историю</button>
+      <p>Созданные файлы сохранятся</p>
+    </div>
+  </aside>
+  <main class="workspace">
+    <header class="topbar">
+      <button class="mobile-menu-button" type="button" data-bs-toggle="offcanvas" data-bs-target="#history-sidebar" aria-controls="history-sidebar"><span data-icon="clock"></span>История</button>
+      <button class="connection" id="connection" type="button" data-action="reconnect" title="Подключиться к серверу"><span class="connection-dot"></span><span id="connection-label">Подключение…</span></button>
+    </header>
+    <div class="content container-fluid">
+      <div class="storage-warning alert alert-warning" id="storage-warning" role="status" hidden></div>
+      <div id="active-run-banner"></div>
+      <section class="composer card" aria-labelledby="composer-title">
+        <div class="section-title-row">
+          <div><p class="eyebrow">Планировщик задач</p><h1 id="composer-title">Что нужно сделать?</h1></div>
+          <div class="keyboard-hint">Ctrl + Enter</div>
+        </div>
+        <form id="task-form">
+          <label for="task-prompt" class="field-label">Описание задачи</label>
+          <textarea id="task-prompt" class="form-control" rows="3" maxlength="20000" placeholder="Например: получи сведения о процессоре и памяти, затем сохрани отчёт в data/report.txt" required></textarea>
+          <div class="composer-bottom">
+            <div class="examples"><span>Примеры:</span>
+              <button type="button" data-example="system">Сведения о системе</button>
+              <button type="button" data-example="note">Создать заметку</button>
+              <button type="button" data-example="copy">Скопировать файл</button>
+            </div>
+            <div class="composer-actions">
+              <button class="btn secondary-button" id="stop-btn" type="button" data-action="stop" disabled><span data-icon="stop"></span>Остановить</button>
+              <button class="btn btn-primary primary-button" id="run-btn" type="submit" disabled><span data-icon="play"></span>Выполнить</button>
+            </div>
+          </div>
+          <p class="composer-note" id="composer-note" hidden>Сейчас выполняется другая задача. Можно просматривать историю.</p>
+        </form>
+      </section>
+      <section class="run-view" id="run-view" aria-label="Выбранный запуск" hidden>
+        <div id="run-heading"></div>
+        <div id="run-meta"></div>
+        <div class="run-info-grid">
+          <div class="prompt-card card"><div class="small-heading"><span data-icon="spark"></span>Исходный запрос</div><p id="run-prompt"></p></div>
+          <div class="metric-card card"><span>Длительность</span><strong id="run-duration">—</strong><span id="run-progress"></span></div>
+        </div>
+        <div id="clarifications"></div>
+        <div id="run-alert"></div>
+        <div id="legacy-notice"></div>
+        <div class="details-grid">
+          <section class="plan-section card" aria-labelledby="plan-title">
+            <div class="panel-heading"><div><h2 id="plan-title">Схема выполнения</h2><p>Ориентированный граф зависимостей</p></div><span id="plan-progress"></span></div>
+            <div class="dag-toolbar" id="dag-toolbar" role="group" aria-label="Управление графом">
+              <div class="btn-group btn-group-sm" role="group" aria-label="Масштаб графа">
+                <button class="btn dag-tool" type="button" data-dag-action="out" aria-label="Уменьшить граф" title="Уменьшить" disabled>−</button>
+                <button class="btn dag-tool dag-scale" type="button" data-dag-action="actual" aria-label="Масштаб графа 100 процентов" title="Показать в масштабе 100%" disabled>100%</button>
+                <button class="btn dag-tool" type="button" data-dag-action="in" aria-label="Увеличить граф" title="Увеличить" disabled>+</button>
+              </div>
+              <button class="btn btn-sm dag-tool" type="button" data-dag-action="fit" disabled>Вписать</button>
+              <button class="btn btn-sm dag-tool" type="button" data-dag-action="arrange" title="Восстановить автоматическое размещение узлов" disabled>Упорядочить</button>
+            </div>
+            <div class="dag-scroll" id="dag-container" tabindex="0" aria-label="Граф зависимостей шагов" aria-describedby="dag-help"></div>
+            <p class="dag-help" id="dag-help">Перетаскивайте фон для обзора, узлы — для размещения. Колесо — масштаб. Нажатие узла открывает журнал.</p>
+          </section>
+          <section class="log-section card" aria-labelledby="log-title">
+            <div class="panel-heading"><div><h2 id="log-title">Журнал шагов</h2><p>Полный ход выполнения задачи</p></div></div>
+            <div class="step-list" id="log-container"></div>
+          </section>
+        </div>
+      </section>
+      <section class="welcome card" id="welcome">
+        <div class="welcome-icon" data-icon="spark"></div>
+        <h2>Опишите задачу, чтобы начать</h2>
+        <p>Планировщик разобьёт её на шаги, покажет зависимости и сохранит результаты в истории.</p>
+        <div class="status-legend" id="status-legend"></div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="modal fade" id="clear-modal" tabindex="-1" aria-labelledby="clear-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content planner-confirm">
+    <div class="modal-header"><h2 class="modal-title" id="clear-title">Очистить историю?</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+    <div class="modal-body"><p>Сохранённые записи будут удалены. Текущая задача и созданные файлы останутся.</p></div>
+    <div class="modal-footer"><button class="btn secondary-button" type="button" data-bs-dismiss="modal">Отмена</button><button class="btn danger-button" type="button" data-action="clear-history">Очистить историю</button></div>
+  </div></div>
+</div>
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div class="toast planner-toast" id="notification" role="status" aria-live="polite" aria-atomic="true">
+    <div class="d-flex align-items-center"><div class="toast-body" id="notification-text"></div><button class="toast-undo" id="undo-delete" type="button" data-action="undo-delete" hidden>Отменить</button><button type="button" class="btn-close ms-auto me-3" data-bs-dismiss="toast" aria-label="Закрыть уведомление"></button></div>
   </div>
-
-  <!-- Main: DAG + Log -->
-  <div id="elicitation-container" class="mb-3" aria-live="polite"></div>
-  <div class="row g-3 mb-3">
-
-    <!-- DAG -->
-    <div class="col-xl-5 col-lg-5">
-      <div class="card" style="height:100%;min-height:260px">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-diagram-2 me-2 text-primary"></i>Execution Plan (DAG)</span>
-          <span id="plan-badge" class="badge bg-secondary" style="visibility:hidden">0 steps</span>
-        </div>
-        <div class="card-body p-3" id="dag-container">
-          <div id="dag-placeholder" class="d-flex flex-column align-items-center justify-content-center text-muted py-5">
-            <i class="bi bi-diagram-3" style="font-size:2.5rem;opacity:.25"></i>
-            <p class="small mt-2 mb-0">Plan will appear here</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Execution Log -->
-    <div class="col-xl-7 col-lg-7">
-      <div class="card" style="height:100%;min-height:260px">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-terminal me-2 text-primary"></i>Execution Log</span>
-          <span id="log-stats" class="text-muted" style="font-size:.8rem"></span>
-        </div>
-        <div class="card-body p-3" id="log-container">
-          <div id="log-placeholder" class="d-flex flex-column align-items-center justify-content-center text-muted py-5">
-            <i class="bi bi-clock-history" style="font-size:2.5rem;opacity:.25"></i>
-            <p class="small mt-2 mb-0">Step results will stream here</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Result alert -->
-  <div id="result-alert" class="mb-3" style="display:none"></div>
-
-  <!-- History -->
-  <div class="row">
-    <div class="col">
-      <div class="card">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-clock-history me-2 text-primary"></i>Recent Tasks</span>
-          <button class="btn btn-sm btn-outline-secondary" onclick="clearHistory()">
-            <i class="bi bi-trash3 me-1"></i>Clear
-          </button>
-        </div>
-        <div id="history-list" class="list-group list-group-flush">
-          <div id="history-empty" class="list-group-item text-center text-muted small py-3">
-            No tasks yet
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-</div><!-- /container -->
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-<script>
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  flowchart: { useMaxWidth: true, htmlLabels: false, curve: 'linear' },
-});
-
-// ─── State ────────────────────────────────────────────────────────────────────
-let ws          = null;
-let planSteps   = [];                   // [{id, server, tool, depends_on, description}]
-let stepStatus  = {};                   // {id → "pending"|"running"|"done"|"error"|"skipped"}
-let stepData    = {};                   // {id → full entry object}
-let taskStart   = null;
-let isRunning   = false;
-let renderBusy  = false;
-let renderAgain = false;
-const inputForms = new Map();
-
-// ─── Connection ────────────────────────────────────────────────────────────────
-function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const socket = new WebSocket(`${proto}://${location.host}/ws`);
-  ws = socket;
-  socket.onopen = () => setBadge('success', 'Connected');
-  socket.onclose = () => {
-    if (ws !== socket) return;
-    setBadge('secondary', 'Disconnected'); ws = null;
-    if (isRunning) onError('Connection lost. Execution was cancelled; completed actions may remain.');
-  };
-  socket.onerror = () => setBadge('danger', 'Error');
-  socket.onmessage = e => {
-    try { handleMsg(JSON.parse(e.data)); }
-    catch (_) { onError('The server returned an invalid message.'); }
-  };
-}
-
-function setBadge(cls, text) {
-  const el = document.getElementById('ws-badge');
-  el.className = `badge bg-${cls}`;
-  el.innerHTML = `<i class="bi bi-circle-fill me-1" style="font-size:.5rem"></i>${text}`;
-}
-
-// ─── Run ───────────────────────────────────────────────────────────────────────
-async function runTask() {
-  const input = document.getElementById('task-input');
-  const task  = input.value.trim();
-  if (!task || isRunning) return;
-
-  isRunning = true;
-  document.getElementById('run-btn').disabled = true;
-  try {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      connect();
-      const socket = ws;
-      await new Promise((resolve, reject) => {
-        const finish = (error) => {
-          clearTimeout(timer);
-          socket.removeEventListener('open', opened);
-          socket.removeEventListener('close', closed);
-          error ? reject(error) : resolve();
-        };
-        const opened = () => finish();
-        const closed = () => finish(new Error('Could not connect to the server.'));
-        const timer = setTimeout(() => finish(new Error('Connection timed out.')), 10000);
-        socket.addEventListener('open', opened, {once:true});
-        socket.addEventListener('close', closed, {once:true});
-      });
-    }
-    sendTask(task);
-  } catch (error) { onError(error.message); }
-}
-
-function sendTask(task) {
-  planSteps  = [];
-  stepStatus = {};
-  stepData   = {};
-  taskStart  = Date.now();
-  isRunning  = true;
-
-  const btn = document.getElementById('run-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spin"><i class="bi bi-arrow-repeat"></i></span> Running…';
-  document.getElementById('cancel-btn').style.display = '';
-  document.getElementById('task-input').disabled = true;
-  clearInputForms();
-
-  document.getElementById('result-alert').style.display = 'none';
-  document.getElementById('status-text').textContent = '⏳ Sending task to LLM planner…';
-  document.getElementById('log-stats').textContent = '';
-  document.getElementById('plan-badge').style.visibility = 'hidden';
-
-  // Reset log
-  const logEl = document.getElementById('log-container');
-  logEl.innerHTML = `<div class="d-flex align-items-center gap-2 text-muted py-4 justify-content-center">
-    <span class="spin"><i class="bi bi-arrow-repeat text-primary" style="font-size:1.2rem"></i></span>
-    <span class="small">Planning…</span></div>`;
-
-  // Reset DAG
-  const dagEl = document.getElementById('dag-container');
-  dagEl.innerHTML = `<div class="d-flex align-items-center gap-2 text-muted py-4 justify-content-center">
-    <span class="spin"><i class="bi bi-arrow-repeat text-primary" style="font-size:1.2rem"></i></span>
-    <span class="small">Building plan…</span></div>`;
-
-  ws.send(JSON.stringify({ task }));
-}
-
-document.getElementById('task-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') runTask();
-});
-
-function setSuggestion(el) {
-  document.getElementById('task-input').value = el.textContent.trim();
-  document.getElementById('task-input').focus();
-}
-
-// ─── Message dispatch ─────────────────────────────────────────────────────────
-function handleMsg(msg) {
-  switch (msg.type) {
-    case 'plan':        onPlan(msg.plan);   break;
-    case 'step_update': onStep(msg);        break;
-    case 'done':        onDone(msg);        break;
-    case 'error':       onError(`${msg.code ? `[${msg.code}] ` : ''}${msg.message}${msg.run_id ? ` (run: ${msg.run_id})` : ''}`); break;
-    case 'elicitation': onElicitation(msg); break;
-    case 'input_accepted':
-      inputForms.get(msg.request_id)?.remove(); inputForms.delete(msg.request_id);
-      document.getElementById('status-text').textContent = 'Answer received. Continuing…';
-      break;
-    case 'input_closed':
-      inputForms.get(msg.request_id)?.remove(); inputForms.delete(msg.request_id);
-      break;
-    case 'input_error': {
-      const form = inputForms.get(msg.request_id);
-      if (form) {
-        form.querySelector('.input-error').textContent = msg.message;
-        form.querySelectorAll('button').forEach(b => b.disabled = false);
-      } else document.getElementById('status-text').textContent = msg.message;
-      break;
-    }
-    case 'cancelled': onError(msg.message); break;
-    case 'run_started':
-      document.getElementById('status-text').textContent = `Planning… Run: ${msg.run_id}`;
-      break;
-  }
-}
-
-function cancelTask() {
-  if (isRunning && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'cancel'}));
-}
-
-function clearInputForms() {
-  inputForms.clear();
-  document.getElementById('elicitation-container').replaceChildren();
-}
-
-function onElicitation(msg) {
-  const form = document.createElement('form');
-  form.className = 'card card-body border border-warning mb-2';
-  const title = document.createElement('h6');
-  title.textContent = msg.message;
-  form.appendChild(title);
-  const fields = [];
-  const schema = msg.requested_schema;
-  for (const [key, prop] of Object.entries(schema.properties)) {
-    const label = document.createElement('label');
-    label.className = 'form-label d-block';
-    label.textContent = prop.title || key;
-    const input = document.createElement(prop.enum ? 'select' : 'input');
-    input.className = prop.type === 'boolean' ? 'form-check-input ms-2' : 'form-control mt-1';
-    input.required = schema.required?.includes(key) && prop.type !== 'boolean';
-    if (prop.enum) {
-      prop.enum.forEach(value => {
-        const option = document.createElement('option');
-        option.value = JSON.stringify(value); option.textContent = String(value);
-        input.appendChild(option);
-      });
-    } else if (prop.type === 'boolean') {
-      input.type = 'checkbox'; input.checked = prop.default === true;
-    } else {
-      input.type = ['number', 'integer'].includes(prop.type) ? 'number' : 'text';
-      if (input.type === 'number') input.step = prop.type === 'integer' ? '1' : 'any';
-      if (prop.minimum != null) input.min = prop.minimum;
-      if (prop.maximum != null) input.max = prop.maximum;
-      if (prop.minLength != null) input.minLength = prop.minLength;
-      if (prop.maxLength != null) input.maxLength = prop.maxLength;
-      input.value = prop.default ?? '';
-    }
-    label.appendChild(input); form.appendChild(label);
-    fields.push({key, prop, input});
-  }
-  const error = document.createElement('div');
-  error.className = 'input-error text-danger small mb-2'; form.appendChild(error);
-  const buttons = document.createElement('div');
-  const submit = document.createElement('button');
-  submit.type = 'submit'; submit.className = 'btn btn-primary me-2'; submit.textContent = 'Continue';
-  const decline = document.createElement('button');
-  decline.type = 'button'; decline.className = 'btn btn-outline-secondary'; decline.textContent = 'Decline';
-  const respond = (action, content) => {
-    if (ws?.readyState !== WebSocket.OPEN) { onError('Connection lost.'); return; }
-    error.textContent = '';
-    ws.send(JSON.stringify({type:'elicitation_response', request_id:msg.request_id, action, content}));
-    submit.disabled = decline.disabled = true;
-  };
-  form.onsubmit = event => {
-    event.preventDefault();
-    if (!form.reportValidity()) return;
-    const content = Object.create(null);
-    fields.forEach(({key, prop, input}) => {
-      if (!input.required && input.value === '' && prop.type !== 'boolean') return;
-      content[key] = prop.enum ? JSON.parse(input.value) : prop.type === 'boolean' ? input.checked
-        : ['number', 'integer'].includes(prop.type) ? Number(input.value) : input.value;
-    });
-    respond('accept', content);
-  };
-  decline.onclick = () => respond('decline');
-  buttons.append(submit, decline); form.appendChild(buttons);
-  inputForms.set(msg.request_id, form);
-  document.getElementById('elicitation-container').appendChild(form);
-  document.getElementById('status-text').textContent = 'Waiting for your answer…';
-  form.querySelector('input,select')?.focus();
-}
-
-function onPlan(plan) {
-  planSteps = plan.steps || [];
-  planSteps.forEach(s => {
-    stepStatus[s.id] = 'pending';
-    stepData[s.id]   = { ...s };
-  });
-  document.getElementById('status-text').textContent = `📋 Plan ready — ${planSteps.length} step(s), executing…`;
-  const pb = document.getElementById('plan-badge');
-  pb.style.visibility = 'visible';
-  pb.className = 'badge bg-primary';
-  pb.textContent = `${planSteps.length} steps`;
-
-  renderDag();
-  renderFullLog();
-}
-
-function onStep(msg) {
-  const id = msg.id;
-  stepStatus[id] = msg.status;
-  if (!stepData[id]) stepData[id] = {};
-  Object.assign(stepData[id], msg);
-  renderDag();
-  refreshCard(id);
-  refreshStats();
-}
-
-function onDone(msg) {
-  isRunning = false;
-  clearInputForms();
-  document.getElementById('cancel-btn').style.display = 'none';
-  document.getElementById('task-input').disabled = false;
-  (msg.execution || []).forEach(onStep);
-  const elapsed = ((Date.now() - taskStart) / 1000).toFixed(1);
-
-  const btn = document.getElementById('run-btn');
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run';
-  document.getElementById('status-text').textContent = '';
-
-  const alertEl = document.getElementById('result-alert');
-  alertEl.style.display = '';
-  if (msg.success) {
-    alertEl.innerHTML = `<div class="alert alert-success d-flex align-items-center gap-2 mb-0">
-      <i class="bi bi-check-circle-fill fs-5"></i>
-      <div><strong>Task completed successfully</strong> in ${elapsed}s
-      <div class="small">Run: ${esc(msg.run_id || '')}</div></div></div>`;
-  } else {
-    alertEl.innerHTML = `<div class="alert alert-danger d-flex align-items-center gap-2 mb-0">
-      <i class="bi bi-x-circle-fill fs-5"></i>
-      <div><strong>Task failed</strong> after ${elapsed}s — see errors in the log
-      <div class="small">Run: ${esc(msg.run_id || '')}</div></div></div>`;
-  }
-
-  const task = document.getElementById('task-input').value.trim();
-  saveHistory(task, msg.success, planSteps.length, elapsed);
-}
-
-function onError(message) {
-  isRunning = false;
-  clearInputForms();
-  document.getElementById('cancel-btn').style.display = 'none';
-  document.getElementById('task-input').disabled = false;
-  for (const step of planSteps) {
-    if (['pending', 'running', 'waiting_input'].includes(stepStatus[step.id])) {
-      onStep({id:step.id, status:'cancelled', error:message});
-    }
-  }
-  if (!planSteps.length) {
-    document.getElementById('dag-container').textContent = 'No executable plan';
-    document.getElementById('log-container').textContent = 'No steps executed';
-  }
-  const btn = document.getElementById('run-btn');
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run';
-  document.getElementById('status-text').textContent = '';
-
-  const alertEl = document.getElementById('result-alert');
-  alertEl.style.display = '';
-  alertEl.innerHTML = `<div class="alert alert-danger d-flex align-items-center gap-2 mb-0">
-    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
-    <div><strong>Error:</strong> ${esc(message)}</div></div>`;
-}
-
-// ─── DAG ──────────────────────────────────────────────────────────────────────
-function dagSource() {
-  const lines = ['graph LR'];
-  lines.push('classDef pending fill:#e9ecef,stroke:#adb5bd,color:#495057');
-  lines.push('classDef running fill:#cfe2ff,stroke:#0d6efd,color:#084298');
-  lines.push('classDef done    fill:#d1e7dd,stroke:#198754,color:#0a3622');
-  lines.push('classDef error   fill:#f8d7da,stroke:#dc3545,color:#58151c');
-  lines.push('classDef skipped fill:#fff3cd,stroke:#ffc107,color:#664d03');
-  lines.push('classDef waiting_input fill:#fff3cd,stroke:#fd7e14,color:#664d03');
-  lines.push('classDef cancelled fill:#e9ecef,stroke:#6c757d,color:#495057');
-
-  for (const s of planSteps) {
-    const st  = stepStatus[s.id] || 'pending';
-    const lbl = `${s.id}: ${s.server}.${s.tool}`;
-    lines.push(`  S${s.id}["${lbl}"]:::${st}`);
-  }
-  for (const s of planSteps) {
-    for (const dep of (s.depends_on || [])) {
-      lines.push(`  S${dep} --> S${s.id}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-async function renderDag() {
-  if (!planSteps.length) return;
-  if (renderBusy) { renderAgain = true; return; }
-
-  renderBusy = true;
-  try {
-    const { svg } = await mermaid.render('dag' + Date.now(), dagSource());
-    document.getElementById('dag-container').innerHTML = svg;
-  } catch (e) {
-    // silent — might fail if diagram is empty
-  }
-  renderBusy = false;
-  if (renderAgain) { renderAgain = false; renderDag(); }
-}
-
-// ─── Log ──────────────────────────────────────────────────────────────────────
-const STATUS_ICON = {
-  pending: '<i class="bi bi-hourglass text-secondary"></i>',
-  running: '<span class="spin"><i class="bi bi-arrow-repeat text-primary"></i></span>',
-  done:    '<i class="bi bi-check-circle-fill text-success"></i>',
-  error:   '<i class="bi bi-x-circle-fill text-danger"></i>',
-  skipped: '<i class="bi bi-dash-circle text-warning"></i>',
-  waiting_input: '<i class="bi bi-chat-square-text text-warning"></i>',
-  cancelled: '<i class="bi bi-stop-circle text-secondary"></i>',
-};
-const STATUS_BADGE_CLS = {
-  pending: 'secondary', running: 'primary', done: 'success', error: 'danger', skipped: 'warning',
-  waiting_input: 'warning', cancelled: 'secondary',
-};
-
-function cardHTML(id) {
-  const st   = stepStatus[id] || 'pending';
-  const d    = stepData[id]   || {};
-  const icon = STATUS_ICON[st];
-  const bg   = STATUS_BADGE_CLS[st] || 'secondary';
-  const ms   = d.duration_ms != null ? `<small class="text-muted ms-2">${d.duration_ms}ms</small>` : '';
-  const tool = d.server ? `<code class="small">${d.server}.${d.tool}</code>` : '';
-  const desc = esc(d.description || `Step ${id}`);
-
-  let extra = '';
-  if (st === 'done' && d.result) {
-    const text = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-    const preview = text.length > 240 ? text.slice(0, 240) + '…' : text;
-    extra = `<div class="result-preview">${esc(preview)}</div>`;
-  } else if (['error', 'skipped', 'cancelled'].includes(st) && d.error) {
-    extra = `<div class="text-danger small mt-1">
-      <i class="bi bi-exclamation-triangle me-1"></i>${d.error_code ? `[${esc(d.error_code)}] ` : ''}${esc(d.error)}</div>`;
-  }
-
-  return `<div class="d-flex align-items-start gap-2">
-    <div class="pt-1">${icon}</div>
-    <div class="flex-grow-1" style="min-width:0">
-      <div class="d-flex flex-wrap align-items-center gap-1">
-        <span class="badge bg-${bg} bg-opacity-75">step ${id}</span>
-        ${tool}${ms}
-      </div>
-      <div class="fw-semibold small mt-1">${desc}</div>
-      ${extra}
-    </div>
-  </div>`;
-}
-
-function renderFullLog() {
-  const cont = document.getElementById('log-container');
-  cont.innerHTML = '';
-  for (const s of planSteps) {
-    const div = document.createElement('div');
-    div.id        = `sc-${s.id}`;
-    div.className = `step-card ${stepStatus[s.id] || 'pending'}`;
-    div.innerHTML = cardHTML(s.id);
-    cont.appendChild(div);
-  }
-}
-
-function refreshCard(id) {
-  const card = document.getElementById(`sc-${id}`);
-  if (!card) return;
-  card.className = `step-card ${stepStatus[id] || 'pending'}`;
-  card.innerHTML  = cardHTML(id);
-  // Auto-scroll
-  const cont = document.getElementById('log-container');
-  if (cont.scrollHeight - cont.scrollTop - cont.clientHeight < 80)
-    cont.scrollTop = cont.scrollHeight;
-}
-
-function refreshStats() {
-  const vals  = Object.values(stepStatus);
-  const done  = vals.filter(s => s === 'done').length;
-  const total = planSteps.length;
-  const run   = vals.filter(s => s === 'running').length;
-  let txt = `${done}/${total} done`;
-  if (run) txt += ` · ${run} running`;
-  document.getElementById('log-stats').textContent = txt;
-}
-
-// ─── History ─────────────────────────────────────────────────────────────────
-function saveHistory(task, success, steps, elapsed) {
-  try {
-    const h = JSON.parse(localStorage.getItem('planner-history') || '[]');
-    h.unshift({ task, success, steps, elapsed, ts: Date.now() });
-    localStorage.setItem('planner-history', JSON.stringify(h.slice(0, 20)));
-    loadHistory();
-  } catch (_) {}
-}
-
-function loadHistory() {
-  try {
-    const h    = JSON.parse(localStorage.getItem('planner-history') || '[]');
-    const list = document.getElementById('history-list');
-    const empty = document.getElementById('history-empty');
-    list.querySelectorAll('.history-item').forEach(el => el.remove());
-
-    if (!h.length) { empty.style.display = ''; return; }
-    empty.style.display = 'none';
-
-    for (const item of h) {
-      const el = document.createElement('div');
-      el.className = 'list-group-item list-group-item-action history-item d-flex align-items-center gap-3';
-      const icon = item.success
-        ? '<i class="bi bi-check-circle-fill text-success"></i>'
-        : '<i class="bi bi-x-circle-fill text-danger"></i>';
-      el.innerHTML = `
-        <div>${icon}</div>
-        <div class="flex-grow-1" style="min-width:0">
-          <div class="text-truncate small fw-semibold">${esc(item.task)}</div>
-          <div class="text-muted" style="font-size:.74rem">
-            ${item.steps} steps · ${item.elapsed}s · ${ago(item.ts)}
-          </div>
-        </div>
-        <button class="btn btn-sm btn-outline-primary flex-shrink-0"
-          title="Run again">
-          <i class="bi bi-arrow-repeat"></i>
-        </button>`;
-      el.querySelector('button').addEventListener('click', ev => {
-        ev.stopPropagation();
-        document.getElementById('task-input').value = item.task;
-        runTask();
-      });
-      el.addEventListener('click', () => {
-        document.getElementById('task-input').value = item.task;
-        document.getElementById('task-input').focus();
-      });
-      list.appendChild(el);
-    }
-  } catch (_) {}
-}
-
-function clearHistory() {
-  try { localStorage.removeItem('planner-history'); } catch (_) {}
-  loadHistory();
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function ago(ts) {
-  const d = Math.floor((Date.now() - ts) / 1000);
-  if (d < 60) return 'just now';
-  if (d < 3600) return `${Math.floor(d/60)}m ago`;
-  if (d < 86400) return `${Math.floor(d/3600)}h ago`;
-  return `${Math.floor(d/86400)}d ago`;
-}
-
-// ─── Init ─────────────────────────────────────────────────────────────────────
-connect();
-loadHistory();
-</script>
+</div>
+<div class="visually-hidden" id="live-status" role="status" aria-live="polite"></div>
 </body>
 </html>

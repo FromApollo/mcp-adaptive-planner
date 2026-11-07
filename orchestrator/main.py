@@ -6,6 +6,7 @@ import uuid
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Planner Agent", version="0.4.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parents[1] / "frontend"), name="static")
 
 
 @app.exception_handler(RequestValidationError)
@@ -73,7 +75,7 @@ async def prepare_plan(request, ask):
                 raise AppError("clarification_limit", "The task still lacks essential information after three clarification rounds.")
             questions = task_plan["questions"]
             schema = {"type": "object", "properties": {
-                q["id"]: {"type": "string", "title": q["question"], "minLength": 1, "maxLength": 10000}
+                q["id"]: {"type": "string", "title": q["question"], "description": q["question"], "minLength": 1, "maxLength": 10000}
                 for q in questions
             }, "required": [q["id"] for q in questions], "additionalProperties": False}
             content = await ask("Для продолжения необходимо уточнить данные задачи.", schema, history)
