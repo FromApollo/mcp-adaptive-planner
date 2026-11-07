@@ -1,10 +1,13 @@
 import os
 from mcp.server.fastmcp.server import FastMCP
+from mcp_servers.common import tool_errors
+from mcp_servers.common import atomic_output
 
 mcp = FastMCP("filesystem")
 
 
 @mcp.tool()
+@tool_errors
 def read_file(path: str) -> str:
     """Read the contents of a file and return as text."""
     with open(path, "r", encoding="utf-8") as f:
@@ -12,15 +15,17 @@ def read_file(path: str) -> str:
 
 
 @mcp.tool()
+@tool_errors
 def write_file(path: str, content: str) -> str:
     """Write text content to a file. Creates parent directories if needed."""
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    with atomic_output(path) as temporary:
+        with open(temporary, "w", encoding="utf-8") as f:
+            f.write(content)
     return f"Successfully written to {path}"
 
 
 @mcp.tool()
+@tool_errors
 def list_dir(path: str = ".") -> str:
     """List files and folders in a directory."""
     entries = os.listdir(path)

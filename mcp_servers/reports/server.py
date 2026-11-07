@@ -1,5 +1,8 @@
 import os
 from mcp.server.fastmcp.server import FastMCP
+from mcp_servers.common import tool_errors, atomic_output
+from xml.sax.saxutils import escape
+from orchestrator.errors import AppError
 
 mcp = FastMCP("reports")
 
@@ -9,6 +12,7 @@ def _ensure_dir(path: str) -> None:
 
 
 @mcp.tool()
+@tool_errors
 def create_pdf(title: str, content: str, output_path: str) -> str:
     """Create a PDF report with a title and multi-line text content."""
     from reportlab.lib.pagesizes import A4
@@ -23,19 +27,22 @@ def create_pdf(title: str, content: str, output_path: str) -> str:
         topMargin=2 * cm, bottomMargin=2 * cm,
     )
     styles = getSampleStyleSheet()
-    story = [Paragraph(title, styles["Title"]), Spacer(1, 0.5 * cm)]
+    story = [Paragraph(escape(title), styles["Title"]), Spacer(1, 0.5 * cm)]
 
     for line in content.splitlines():
         stripped = line.strip()
         if stripped:
-            story.append(Paragraph(stripped, styles["Normal"]))
+            story.append(Paragraph(escape(stripped), styles["Normal"]))
             story.append(Spacer(1, 0.15 * cm))
 
-    doc.build(story)
+    with atomic_output(output_path) as temporary:
+        doc.filename = temporary
+        doc.build(story)
     return f"PDF created: {output_path}"
 
 
 @mcp.tool()
+@tool_errors
 def create_docx(title: str, content: str, output_path: str) -> str:
     """Create a DOCX report with a title and multi-line text content."""
     from docx import Document
@@ -49,11 +56,13 @@ def create_docx(title: str, content: str, output_path: str) -> str:
         if stripped:
             doc.add_paragraph(stripped)
 
-    doc.save(output_path)
+    with atomic_output(output_path) as temporary:
+        doc.save(temporary)
     return f"DOCX created: {output_path}"
 
 
 @mcp.tool()
+@tool_errors
 def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str) -> str:
     """Create a PDF report with a data table.
     headers: comma-separated column names.
@@ -71,7 +80,7 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
                             rightMargin=2 * cm, leftMargin=2 * cm,
                             topMargin=2 * cm, bottomMargin=2 * cm)
     styles = getSampleStyleSheet()
-    story = [Paragraph(title, styles["Title"]), Spacer(1, 0.5 * cm)]
+    story = [Paragraph(escape(title), styles["Title"]), Spacer(1, 0.5 * cm)]
 
     header_row = [h.strip() for h in headers.split(",")]
     data = [header_row]
@@ -79,6 +88,8 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
         if row_str.strip():
             data.append([c.strip() for c in row_str.split(",")])
 
+    if not headers.strip() or len(data) < 2 or any(len(row) != len(header_row) for row in data):
+        raise AppError("invalid_arguments", "A table requires headers and rows with matching column counts.")
     table = Table(data)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
@@ -89,7 +100,9 @@ def create_pdf_with_table(title: str, headers: str, rows: str, output_path: str)
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ]))
     story.append(table)
-    doc.build(story)
+    with atomic_output(output_path) as temporary:
+        doc.filename = temporary
+        doc.build(story)
     return f"PDF with table created: {output_path}"
 
 
